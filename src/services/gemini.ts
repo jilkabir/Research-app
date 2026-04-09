@@ -49,12 +49,12 @@ export async function generateAcademicResponse(
       body: JSON.stringify({ systemInstruction, prompt }),
     });
   } catch (err) {
-    throw new Error(friendlyError(err));
+    throw new Error(`Network error: ${String(err)}`);
   }
 
   if (!response.ok) {
-    const err = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
-    throw new Error(friendlyError(err.error || `HTTP ${response.status}`));
+    const body = await response.text().catch(() => '');
+    throw new Error(`HTTP ${response.status}: ${body || '(empty response)'}`);
   }
 
   const reader = response.body?.getReader();
@@ -87,12 +87,12 @@ export async function generateJSON<T>(
       body: JSON.stringify({ systemInstruction, prompt }),
     });
   } catch (err) {
-    throw new Error(friendlyError(err));
+    throw new Error(`Network error: ${String(err)}`);
   }
 
   if (!response.ok) {
-    const err = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
-    throw new Error(friendlyError(err.error || `HTTP ${response.status}`));
+    const body = await response.text().catch(() => '');
+    throw new Error(`HTTP ${response.status}: ${body || '(empty response)'}`);
   }
 
   const raw = await response.text();
