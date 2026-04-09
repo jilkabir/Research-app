@@ -64,7 +64,7 @@ export function OutputView({ content, isLoading }: OutputViewProps) {
         <div className="flex items-center gap-2">
           <div className="w-2 h-2 rounded-full bg-pink-400 animate-pulse shadow-sm shadow-pink-300" />
           <span className="text-[10px] uppercase tracking-widest font-bold text-sky-500">
-            JAK Research Output
+            Jak Research Output
           </span>
         </div>
         {content && (

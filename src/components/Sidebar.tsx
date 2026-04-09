@@ -42,7 +42,7 @@ export function Sidebar({ selectedPromptId, onSelectPrompt }: SidebarProps) {
           </div>
           <div>
             <h1 className="text-lg font-serif font-semibold tracking-tight text-white leading-tight">
-              JAK Research
+              Jak Research
             </h1>
             <p className="text-[9px] uppercase tracking-[0.22em] text-sky-300/70 font-sans mt-0.5">
               Academic Writing Suite
@@ -94,7 +94,7 @@ export function Sidebar({ selectedPromptId, onSelectPrompt }: SidebarProps) {
             J
           </div>
           <div>
-            <p className="text-xs font-semibold text-white/90">JAK Consultant</p>
+            <p className="text-xs font-semibold text-white/90">Jak Consultant</p>
             <p className="text-[10px] text-sky-300/60">PhD Supervision Mode</p>
           </div>
           <div className="ml-auto w-2 h-2 rounded-full bg-emerald-400 shadow-sm shadow-emerald-400/50" title="Active" />
