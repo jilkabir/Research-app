@@ -51,7 +51,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   }
 
   const ai = new GoogleGenAI({ apiKey });
-  let lastErr: unknown;
+  const errors: string[] = [];
 
   for (const model of MODELS) {
     try {
@@ -77,19 +77,17 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       res.end();
       return;
     } catch (err) {
-      lastErr = err;
-      if (model !== MODELS[MODELS.length - 1]) {
-        console.warn(`[Gemini] ${model} failed (${String(err).slice(0, 80)}), trying next model…`);
-        continue;
-      }
-      break;
+      const msg = `${model}: ${String(err)}`;
+      errors.push(msg);
+      console.warn(`[Gemini] ${msg}`);
+      continue;
     }
   }
 
-  console.error('[Gemini] academic handler failed:', lastErr);
+  console.error('[Gemini] all models failed:', errors);
   if (!res.headersSent) {
     res.writeHead(500, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: String(lastErr) }));
+    res.end(JSON.stringify({ error: errors.join(' || ') }));
   } else {
     res.end();
   }
