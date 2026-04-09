@@ -1,24 +1,13 @@
-import { GoogleGenAI } from "@google/genai";
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
-
-const SYSTEM_SUFFIX =
-  "\n\nYou are a senior academic writing consultant with 20+ years of experience in PhD supervision and journal publishing. You write with scholarly authority, natural rhythm, and field-specific precision. You never use robotic transitions, vague qualifiers, or repetitive sentence patterns. Every response reads like it was written by a tenured professor.";
-
-// Models tried in order on quota / rate-limit errors
-const MODELS = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-flash-8b'] as const;
-
-function isQuotaError(err: unknown): boolean {
-  const msg = String(err);
-  return msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota');
-}
+// All Gemini API calls are proxied through Vercel serverless functions (/api/*).
+// The API key is read server-side at request time, so changing it in Vercel
+// takes effect immediately without a rebuild.
 
 export function friendlyError(err: unknown): string {
   const msg = String(err);
-  if (isQuotaError(err))
+  if (msg.includes('quota') || msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED'))
     return 'Gemini API quota exceeded. Please wait a moment and try again, or check your API plan.';
-  if (msg.includes('API_KEY') || msg.includes('401') || msg.includes('403') || msg.includes('invalid'))
-    return 'Invalid or missing GEMINI_API_KEY. Please check your environment variables.';
+  if (msg.includes('GEMINI_API_KEY') || msg.includes('not configured'))
+    return 'Gemini API key not configured. Please add GEMINI_API_KEY to your Vercel environment variables and redeploy.';
   if (msg.includes('fetch') || msg.includes('network') || msg.includes('Failed to fetch'))
     return 'Network error — please check your internet connection.';
   return 'Something went wrong. Please try again.';
@@ -52,40 +41,37 @@ export async function generateAcademicResponse(
   prompt: string,
   onChunk?: (chunk: string) => void
 ): Promise<string> {
-  let lastErr: unknown;
-
-  for (const model of MODELS) {
-    try {
-      const responseStream = await ai.models.generateContentStream({
-        model,
-        contents: prompt,
-        config: {
-          systemInstruction: systemInstruction + SYSTEM_SUFFIX,
-          temperature: 0.7,
-        },
-      });
-
-      let fullText = '';
-      for await (const chunk of responseStream) {
-        const text = chunk.text;
-        if (text) {
-          fullText += text;
-          onChunk?.(text);
-        }
-      }
-      return fullText;
-    } catch (err) {
-      lastErr = err;
-      if (isQuotaError(err) && model !== MODELS[MODELS.length - 1]) {
-        console.warn(`[Gemini] ${model} quota hit, trying next model…`);
-        continue;
-      }
-      break;
-    }
+  let response: Response;
+  try {
+    response = await fetch('/api/academic', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ systemInstruction, prompt }),
+    });
+  } catch (err) {
+    throw new Error(friendlyError(err));
   }
 
-  console.error('[Gemini] generateAcademicResponse failed:', lastErr);
-  throw new Error(friendlyError(lastErr));
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+    throw new Error(friendlyError(err.error || `HTTP ${response.status}`));
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error('No response body from server.');
+
+  const decoder = new TextDecoder();
+  let fullText = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const chunk = decoder.decode(value, { stream: true });
+    fullText += chunk;
+    onChunk?.(chunk);
+  }
+
+  return fullText;
 }
 
 // ── Non-streaming JSON generation (AI Score Checker) ─────────────────────────
@@ -93,42 +79,23 @@ export async function generateJSON<T>(
   systemInstruction: string,
   prompt: string
 ): Promise<T> {
-  // Append a hard instruction to guarantee raw JSON output
-  const forcedPrompt =
-    prompt +
-    '\n\n--- IMPORTANT ---\nRespond with ONLY valid JSON. No markdown fences, no explanation, no extra text. Your entire response must be a single JSON object starting with { and ending with }.';
-
-  let lastErr: unknown;
-
-  for (const model of MODELS) {
-    try {
-      // Use streaming so we capture the complete response reliably
-      const responseStream = await ai.models.generateContentStream({
-        model,
-        contents: forcedPrompt,
-        config: {
-          systemInstruction,
-          temperature: 0.2, // Low temp for consistent JSON
-        },
-      });
-
-      let raw = '';
-      for await (const chunk of responseStream) {
-        if (chunk.text) raw += chunk.text;
-      }
-
-      const jsonStr = extractJSON(raw);
-      return JSON.parse(jsonStr) as T;
-    } catch (err) {
-      lastErr = err;
-      if (isQuotaError(err) && model !== MODELS[MODELS.length - 1]) {
-        console.warn(`[Gemini] ${model} quota hit, trying next model…`);
-        continue;
-      }
-      break;
-    }
+  let response: Response;
+  try {
+    response = await fetch('/api/detect-ai', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ systemInstruction, prompt }),
+    });
+  } catch (err) {
+    throw new Error(friendlyError(err));
   }
 
-  console.error('[Gemini] generateJSON failed:', lastErr);
-  throw new Error(friendlyError(lastErr));
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+    throw new Error(friendlyError(err.error || `HTTP ${response.status}`));
+  }
+
+  const raw = await response.text();
+  const jsonStr = extractJSON(raw);
+  return JSON.parse(jsonStr) as T;
 }
