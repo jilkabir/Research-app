@@ -1,9 +1,7 @@
-// Vercel serverless function — proxies AI-detection JSON requests to Gemini API
-// The GEMINI_API_KEY is read at request time (not baked into the build),
-// so updating the env var in Vercel takes effect immediately.
+// Vercel serverless function — AI detection via Gemini REST API directly.
+// Uses fetch() instead of the @google/genai SDK to avoid v1beta model availability issues.
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { GoogleGenAI } from '@google/genai';
 
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -14,7 +12,8 @@ function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
-const MODELS = ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash-8b'] as const;
+const MODELS = ['gemini-2.0-flash', 'gemini-2.0-flash-lite'];
+const BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   if (req.method !== 'POST') {
@@ -32,16 +31,15 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
   let body: { systemInstruction?: string; prompt?: string };
   try {
-    const raw = await readBody(req);
-    body = JSON.parse(raw);
+    body = JSON.parse(await readBody(req));
   } catch {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Invalid JSON body' }));
     return;
   }
 
-  const { systemInstruction, prompt } = body;
-  if (!prompt || typeof prompt !== 'string') {
+  const { systemInstruction = '', prompt } = body;
+  if (!prompt) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'prompt field is required' }));
     return;
@@ -51,39 +49,43 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     prompt +
     '\n\n--- IMPORTANT ---\nRespond with ONLY valid JSON. No markdown fences, no explanation, no extra text. Your entire response must be a single JSON object starting with { and ending with }.';
 
-  const ai = new GoogleGenAI({ apiKey });
-  let lastErr: unknown;
+  const errors: string[] = [];
 
   for (const model of MODELS) {
     try {
-      const responseStream = await ai.models.generateContentStream({
-        model,
-        contents: forcedPrompt,
-        config: {
-          systemInstruction: systemInstruction || '',
-          temperature: 0.2,
-        },
-      });
+      const upstream = await fetch(
+        `${BASE}/${model}:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: systemInstruction }] },
+            contents: [{ parts: [{ text: forcedPrompt }] }],
+            generationConfig: { temperature: 0.2 },
+          }),
+        }
+      );
 
-      let raw = '';
-      for await (const chunk of responseStream) {
-        if (chunk.text) raw += chunk.text;
-      }
-
-      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-      res.end(raw);
-      return;
-    } catch (err) {
-      lastErr = err;
-      if (model !== MODELS[MODELS.length - 1]) {
-        console.warn(`[Gemini] ${model} failed (${String(err).slice(0, 80)}), trying next model…`);
+      if (!upstream.ok) {
+        const errBody = await upstream.text();
+        errors.push(`${model} HTTP ${upstream.status}: ${errBody}`);
         continue;
       }
-      break;
+
+      const data = await upstream.json() as {
+        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+      };
+      const text = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end(text);
+      return;
+    } catch (err) {
+      errors.push(`${model}: ${String(err)}`);
     }
   }
 
-  console.error('[Gemini] detect-ai handler failed:', lastErr);
+  console.error('[Gemini] all models failed:', errors);
   res.writeHead(500, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ error: String(lastErr) }));
+  res.end(JSON.stringify({ error: errors.join(' | ') }));
 }

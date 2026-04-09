@@ -3,7 +3,6 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
-import { GoogleGenAI } from "@google/genai";
 
 dotenv.config();
 
@@ -13,12 +12,8 @@ const __dirname = path.dirname(__filename);
 const SYSTEM_SUFFIX =
   "\n\nYou are a senior academic writing consultant with 20+ years of experience in PhD supervision and journal publishing. You write with scholarly authority, natural rhythm, and field-specific precision. You never use robotic transitions, vague qualifiers, or repetitive sentence patterns. Every response reads like it was written by a tenured professor.";
 
-const MODELS = ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash-8b"] as const;
-
-function isQuotaError(err: unknown): boolean {
-  const msg = String(err);
-  return msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED") || msg.includes("quota");
-}
+const MODELS = ["gemini-2.0-flash", "gemini-2.0-flash-lite"];
+const BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
 async function startServer() {
   const app = express();
@@ -36,40 +31,63 @@ async function startServer() {
     const { systemInstruction = "", prompt } = req.body;
     if (!prompt) return res.status(400).json({ error: "prompt field is required" });
 
-    const ai = new GoogleGenAI({ apiKey });
+    const errors: string[] = [];
 
-    res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.setHeader("Transfer-Encoding", "chunked");
-    res.setHeader("Cache-Control", "no-cache");
-
-    let lastErr: unknown;
     for (const model of MODELS) {
       try {
-        const stream = await ai.models.generateContentStream({
-          model,
-          contents: prompt,
-          config: {
-            systemInstruction: systemInstruction + SYSTEM_SUFFIX,
-            temperature: 0.7,
-          },
-        });
-        for await (const chunk of stream) {
-          if (chunk.text) res.write(chunk.text);
+        const upstream = await fetch(
+          `${BASE}/${model}:streamGenerateContent?key=${apiKey}&alt=sse`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              systemInstruction: { parts: [{ text: systemInstruction + SYSTEM_SUFFIX }] },
+              contents: [{ parts: [{ text: prompt }] }],
+              generationConfig: { temperature: 0.7 },
+            }),
+          }
+        );
+
+        if (!upstream.ok) {
+          const errBody = await upstream.text();
+          errors.push(`${model} HTTP ${upstream.status}: ${errBody}`);
+          continue;
+        }
+
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.setHeader("Transfer-Encoding", "chunked");
+        res.setHeader("Cache-Control", "no-cache");
+
+        const reader = upstream.body!.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            const data = line.slice(6).trim();
+            if (!data) continue;
+            try {
+              const parsed = JSON.parse(data);
+              const text: string | undefined = parsed?.candidates?.[0]?.content?.parts?.[0]?.text;
+              if (text) res.write(text);
+            } catch { /* skip malformed SSE chunks */ }
+          }
         }
         res.end();
         return;
       } catch (err) {
-        lastErr = err;
-        if (model !== MODELS[MODELS.length - 1]) {
-          console.warn(`[Gemini] ${model} quota hit, trying next model…`);
-          continue;
-        }
-        break;
+        errors.push(`${model}: ${String(err)}`);
       }
     }
 
-    console.error("[Gemini] academic route failed:", lastErr);
-    if (!res.headersSent) res.status(500).json({ error: String(lastErr) });
+    console.error("[Gemini] academic route failed:", errors);
+    if (!res.headersSent) res.status(500).json({ error: errors.join(" | ") });
     else res.end();
   });
 
@@ -87,35 +105,43 @@ async function startServer() {
       prompt +
       "\n\n--- IMPORTANT ---\nRespond with ONLY valid JSON. No markdown fences, no explanation, no extra text. Your entire response must be a single JSON object starting with { and ending with }.";
 
-    const ai = new GoogleGenAI({ apiKey });
-    let lastErr: unknown;
+    const errors: string[] = [];
 
     for (const model of MODELS) {
       try {
-        const stream = await ai.models.generateContentStream({
-          model,
-          contents: forcedPrompt,
-          config: { systemInstruction, temperature: 0.2 },
-        });
-        let raw = "";
-        for await (const chunk of stream) {
-          if (chunk.text) raw += chunk.text;
-        }
-        res.setHeader("Content-Type", "text/plain; charset=utf-8");
-        res.send(raw);
-        return;
-      } catch (err) {
-        lastErr = err;
-        if (model !== MODELS[MODELS.length - 1]) {
-          console.warn(`[Gemini] ${model} quota hit, trying next model…`);
+        const upstream = await fetch(
+          `${BASE}/${model}:generateContent?key=${apiKey}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              systemInstruction: { parts: [{ text: systemInstruction }] },
+              contents: [{ parts: [{ text: forcedPrompt }] }],
+              generationConfig: { temperature: 0.2 },
+            }),
+          }
+        );
+
+        if (!upstream.ok) {
+          const errBody = await upstream.text();
+          errors.push(`${model} HTTP ${upstream.status}: ${errBody}`);
           continue;
         }
-        break;
+
+        const data = await upstream.json() as {
+          candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+        };
+        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.send(text);
+        return;
+      } catch (err) {
+        errors.push(`${model}: ${String(err)}`);
       }
     }
 
-    console.error("[Gemini] detect-ai route failed:", lastErr);
-    res.status(500).json({ error: String(lastErr) });
+    console.error("[Gemini] detect-ai route failed:", errors);
+    res.status(500).json({ error: errors.join(" | ") });
   });
 
   // ── ZeroGPT Proxy ─────────────────────────────────────────────────────────
@@ -160,7 +186,7 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
-    app.get("*", (req, res) => {
+    app.get("*", (_req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }

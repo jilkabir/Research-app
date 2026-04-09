@@ -1,9 +1,7 @@
-// Vercel serverless function — proxies streaming requests to Gemini API
-// The GEMINI_API_KEY is read at request time (not baked into the build),
-// so updating the env var in Vercel takes effect immediately.
+// Vercel serverless function — streams academic text from Gemini REST API directly.
+// Uses fetch() instead of the @google/genai SDK to avoid v1beta model availability issues.
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { GoogleGenAI } from '@google/genai';
 
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -17,7 +15,8 @@ function readBody(req: IncomingMessage): Promise<string> {
 const SYSTEM_SUFFIX =
   '\n\nYou are a senior academic writing consultant with 20+ years of experience in PhD supervision and journal publishing. You write with scholarly authority, natural rhythm, and field-specific precision. You never use robotic transitions, vague qualifiers, or repetitive sentence patterns. Every response reads like it was written by a tenured professor.';
 
-const MODELS = ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash-8b'] as const;
+const MODELS = ['gemini-2.0-flash', 'gemini-2.0-flash-lite'];
+const BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   if (req.method !== 'POST') {
@@ -35,34 +34,42 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
   let body: { systemInstruction?: string; prompt?: string };
   try {
-    const raw = await readBody(req);
-    body = JSON.parse(raw);
+    body = JSON.parse(await readBody(req));
   } catch {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Invalid JSON body' }));
     return;
   }
 
-  const { systemInstruction, prompt } = body;
-  if (!prompt || typeof prompt !== 'string') {
+  const { systemInstruction = '', prompt } = body;
+  if (!prompt) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'prompt field is required' }));
     return;
   }
 
-  const ai = new GoogleGenAI({ apiKey });
   const errors: string[] = [];
 
   for (const model of MODELS) {
     try {
-      const responseStream = await ai.models.generateContentStream({
-        model,
-        contents: prompt,
-        config: {
-          systemInstruction: (systemInstruction || '') + SYSTEM_SUFFIX,
-          temperature: 0.7,
-        },
-      });
+      const upstream = await fetch(
+        `${BASE}/${model}:streamGenerateContent?key=${apiKey}&alt=sse`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: systemInstruction + SYSTEM_SUFFIX }] },
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: { temperature: 0.7 },
+          }),
+        }
+      );
+
+      if (!upstream.ok) {
+        const errBody = await upstream.text();
+        errors.push(`${model} HTTP ${upstream.status}: ${errBody}`);
+        continue;
+      }
 
       res.writeHead(200, {
         'Content-Type': 'text/plain; charset=utf-8',
@@ -71,23 +78,39 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         'X-Accel-Buffering': 'no',
       });
 
-      for await (const chunk of responseStream) {
-        if (chunk.text) res.write(chunk.text);
+      const reader = upstream.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6).trim();
+          if (!data) continue;
+          try {
+            const parsed = JSON.parse(data);
+            const text: string | undefined = parsed?.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (text) res.write(text);
+          } catch { /* skip malformed SSE chunks */ }
+        }
       }
+
       res.end();
       return;
     } catch (err) {
-      const msg = `${model}: ${String(err)}`;
-      errors.push(msg);
-      console.warn(`[Gemini] ${msg}`);
-      continue;
+      errors.push(`${model}: ${String(err)}`);
     }
   }
 
   console.error('[Gemini] all models failed:', errors);
   if (!res.headersSent) {
     res.writeHead(500, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: errors.join(' || ') }));
+    res.end(JSON.stringify({ error: errors.join(' | ') }));
   } else {
     res.end();
   }
