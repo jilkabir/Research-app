@@ -8,8 +8,14 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react(), tailwindcss()],
     define: {
-      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-      'process.env.ZEROGPT_API_KEY': JSON.stringify(env.ZEROGPT_API_KEY),
+      // Check .env file first, then fall back to system environment variables
+      // (needed for AI Studio, Vercel, and other hosted environments)
+      'process.env.GEMINI_API_KEY': JSON.stringify(
+        env.GEMINI_API_KEY || process.env.GEMINI_API_KEY || ''
+      ),
+      'process.env.ZEROGPT_API_KEY': JSON.stringify(
+        env.ZEROGPT_API_KEY || process.env.ZEROGPT_API_KEY || ''
+      ),
     },
     resolve: {
       alias: {

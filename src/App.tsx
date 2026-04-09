@@ -12,6 +12,7 @@ import { PROMPTS } from './constants';
 import { generateAcademicResponse } from './services/gemini';
 import { motion, AnimatePresence } from 'motion/react';
 import { FlaskConical } from 'lucide-react';
+import { ApiKeyBanner } from './components/ApiKeyBanner';
 
 export default function App() {
   const [selectedPromptId, setSelectedPromptId] = useState(PROMPTS[0].id);
@@ -53,6 +54,7 @@ export default function App() {
       />
 
       <main className="flex-1 flex flex-col min-w-0">
+        <ApiKeyBanner />
         {/* Top bar */}
         <header className="h-14 border-b border-sky-100 px-8 flex items-center justify-between bg-white/70 backdrop-blur-sm shadow-sm">
           <div className="flex items-center gap-3">
