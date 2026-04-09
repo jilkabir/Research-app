@@ -35,7 +35,7 @@ export default function App() {
         }
       );
     } catch (error) {
-      setOutput('An error occurred while consulting the academic model. Please ensure your GEMINI_API_KEY is configured correctly.');
+      setOutput(`Error: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setIsLoading(false);
     }
