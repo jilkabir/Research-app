@@ -17,12 +17,7 @@ function readBody(req: IncomingMessage): Promise<string> {
 const SYSTEM_SUFFIX =
   '\n\nYou are a senior academic writing consultant with 20+ years of experience in PhD supervision and journal publishing. You write with scholarly authority, natural rhythm, and field-specific precision. You never use robotic transitions, vague qualifiers, or repetitive sentence patterns. Every response reads like it was written by a tenured professor.';
 
-const MODELS = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-flash-8b'] as const;
-
-function isQuotaError(err: unknown): boolean {
-  const msg = String(err);
-  return msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota');
-}
+const MODELS = ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash-8b'] as const;
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   if (req.method !== 'POST') {
@@ -83,8 +78,8 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       return;
     } catch (err) {
       lastErr = err;
-      if (isQuotaError(err) && model !== MODELS[MODELS.length - 1]) {
-        console.warn(`[Gemini] ${model} quota hit, trying next model…`);
+      if (model !== MODELS[MODELS.length - 1]) {
+        console.warn(`[Gemini] ${model} failed (${String(err).slice(0, 80)}), trying next model…`);
         continue;
       }
       break;

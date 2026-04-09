@@ -13,7 +13,7 @@ const __dirname = path.dirname(__filename);
 const SYSTEM_SUFFIX =
   "\n\nYou are a senior academic writing consultant with 20+ years of experience in PhD supervision and journal publishing. You write with scholarly authority, natural rhythm, and field-specific precision. You never use robotic transitions, vague qualifiers, or repetitive sentence patterns. Every response reads like it was written by a tenured professor.";
 
-const MODELS = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-flash-8b"] as const;
+const MODELS = ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash-8b"] as const;
 
 function isQuotaError(err: unknown): boolean {
   const msg = String(err);
@@ -60,7 +60,7 @@ async function startServer() {
         return;
       } catch (err) {
         lastErr = err;
-        if (isQuotaError(err) && model !== MODELS[MODELS.length - 1]) {
+        if (model !== MODELS[MODELS.length - 1]) {
           console.warn(`[Gemini] ${model} quota hit, trying next model…`);
           continue;
         }
@@ -106,7 +106,7 @@ async function startServer() {
         return;
       } catch (err) {
         lastErr = err;
-        if (isQuotaError(err) && model !== MODELS[MODELS.length - 1]) {
+        if (model !== MODELS[MODELS.length - 1]) {
           console.warn(`[Gemini] ${model} quota hit, trying next model…`);
           continue;
         }
