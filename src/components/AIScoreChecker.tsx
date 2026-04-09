@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { cn } from '../lib/utils';
-import { Shield, AlertTriangle, CheckCircle2, Play, RefreshCw, Loader2, Sparkles } from 'lucide-react';
+import { Shield, AlertTriangle, CheckCircle2, Play, RefreshCw, Loader2, Sparkles, Brain, Zap } from 'lucide-react';
 import { generateAcademicResponse } from '../services/gemini';
 
 interface Sentence {
@@ -15,33 +15,104 @@ interface DetectionResult {
   additional_feedback?: string;
 }
 
+type DetectionMethod = 'zerogpt' | 'gemini';
+
+// ── Gemini-based fallback detector ──────────────────────────────────────────
+async function detectWithGemini(inputText: string): Promise<DetectionResult> {
+  const systemInstruction =
+    'You are an expert AI-content detection model. Analyze the given text and return ONLY a valid JSON object — no markdown, no explanation, just raw JSON.';
+
+  const prompt = `Analyze the following academic text for signs of AI generation.
+
+Return ONLY this JSON structure (no extra text):
+{
+  "fakePercentage": <integer 0-100, how AI-generated the overall text feels>,
+  "isHuman": <boolean, true if fakePercentage < 50>,
+  "sentences": [
+    { "sentence": "<exact sentence from text>", "aiProbability": <integer 0-100> }
+  ]
+}
+
+Rules for scoring:
+- Uniform sentence length → high AI probability
+- Robotic transitions (Furthermore, Moreover, Additionally) → high AI probability
+- Natural hedging, varied rhythm, personal framing → low AI probability
+- Score each sentence individually before calculating the overall fakePercentage
+
+Text to analyze:
+"""
+${inputText}
+"""`;
+
+  const raw = await generateAcademicResponse(systemInstruction, prompt);
+
+  // Extract JSON from the response (strip any markdown fences if present)
+  const jsonMatch = raw.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error('Gemini returned an unexpected response format.');
+
+  const parsed = JSON.parse(jsonMatch[0]) as DetectionResult;
+
+  // Sanity-check the parsed object
+  if (
+    typeof parsed.fakePercentage !== 'number' ||
+    !Array.isArray(parsed.sentences)
+  ) {
+    throw new Error('Gemini response did not match expected schema.');
+  }
+
+  return parsed;
+}
+
+// ── ZeroGPT detector via backend proxy ──────────────────────────────────────
+async function detectWithZeroGPT(inputText: string): Promise<DetectionResult> {
+  const response = await fetch('/api/detect', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: inputText }),
+  });
+
+  const data = await response.json() as { data?: DetectionResult; error?: string };
+
+  if (!response.ok || !data.data) {
+    throw new Error(data.error || `ZeroGPT returned status ${response.status}`);
+  }
+
+  return data.data;
+}
+
+// ── Component ────────────────────────────────────────────────────────────────
 export function AIScoreChecker() {
   const [text, setText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isHumanizing, setIsHumanizing] = useState(false);
   const [result, setResult] = useState<DetectionResult | null>(null);
+  const [detectionMethod, setDetectionMethod] = useState<DetectionMethod | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const checkScore = async (inputText: string) => {
     if (!inputText.trim()) return;
     setIsLoading(true);
     setError(null);
-    try {
-      const response = await fetch('/api/detect', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: inputText }),
-      });
-      const data = await response.json();
+    setResult(null);
 
-      if (response.ok && data.data) {
-        setResult(data.data as DetectionResult);
-      } else {
-        setError(data.error || 'Unexpected response from detection service.');
-        setResult(null);
-      }
+    // 1. Try ZeroGPT first
+    try {
+      const data = await detectWithZeroGPT(inputText);
+      setResult(data);
+      setDetectionMethod('zerogpt');
+      return;
     } catch {
-      setError('Failed to connect to the detection service. Please try again later.');
+      // ZeroGPT failed — silently fall through to Gemini
+    }
+
+    // 2. Fall back to Gemini
+    try {
+      const data = await detectWithGemini(inputText);
+      setResult(data);
+      setDetectionMethod('gemini');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      setError(`Detection failed: ${msg}. Please ensure your GEMINI_API_KEY is set.`);
     } finally {
       setIsLoading(false);
     }
@@ -50,6 +121,7 @@ export function AIScoreChecker() {
   const handleHumanize = async () => {
     if (!text.trim()) return;
     setIsHumanizing(true);
+    setError(null);
     try {
       const systemInstruction =
         'You are a senior academic writing consultant. Rewrite the provided text to sound more human while maintaining all facts and citations. Rules: mix sentence lengths (8-35 words), remove robotic transitions (Furthermore, Moreover, Additionally), add natural hedging (suggests, appears to, indicates).';
@@ -100,7 +172,10 @@ export function AIScoreChecker() {
     <div className="space-y-8 max-w-5xl mx-auto pb-8">
       <div className="space-y-1">
         <h2 className="text-2xl font-serif font-semibold text-sky-900">AI Score Checker</h2>
-        <p className="text-sm text-sky-500/80">Detect AI-generated content and humanize it for academic integrity.</p>
+        <p className="text-sm text-sky-500/80">
+          Detect AI-generated content and humanize it for academic integrity.
+          Uses ZeroGPT when available, falls back to Gemini automatically.
+        </p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -132,7 +207,7 @@ export function AIScoreChecker() {
               {isLoading
                 ? <Loader2 className="w-4 h-4 animate-spin" />
                 : <Play className="w-4 h-4" />}
-              Check AI Score
+              {isLoading ? 'Analyzing...' : 'Check AI Score'}
             </button>
 
             {result && result.fakePercentage > 20 && (
@@ -149,7 +224,7 @@ export function AIScoreChecker() {
                 {isHumanizing
                   ? <Loader2 className="w-4 h-4 animate-spin" />
                   : <Sparkles className="w-4 h-4" />}
-                Auto Humanize
+                {isHumanizing ? 'Rewriting...' : 'Auto Humanize'}
               </button>
             )}
           </div>
@@ -169,11 +244,6 @@ export function AIScoreChecker() {
               <div className="space-y-1">
                 <p className="text-sm font-bold">Detection Failed</p>
                 <p className="text-xs opacity-80">{error}</p>
-                {error.includes('ZEROGPT_API_KEY') && (
-                  <p className="text-[10px] mt-2 font-medium bg-red-100 px-2 py-1 rounded inline-block">
-                    Tip: Add ZEROGPT_API_KEY to your environment variables.
-                  </p>
-                )}
               </div>
             </div>
           )}
@@ -183,12 +253,23 @@ export function AIScoreChecker() {
               {/* Score card */}
               <div className={cn("p-6 rounded-2xl border-2", verdict?.bg, verdict?.border)}>
                 <div className="flex items-center justify-between mb-4">
-                  <div className="space-y-1">
+                  <div className="space-y-1.5">
                     <div className={cn("flex items-center gap-2 font-bold text-lg", verdict?.color)}>
                       {verdict?.icon}
                       {verdict?.label}
                     </div>
-                    <p className="text-xs opacity-60">Based on ZeroGPT analysis</p>
+                    {/* Detection method badge */}
+                    <div className="flex items-center gap-1.5">
+                      {detectionMethod === 'gemini' ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-sky-100 text-sky-600">
+                          <Brain className="w-3 h-3" /> Gemini AI
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-violet-100 text-violet-600">
+                          <Zap className="w-3 h-3" /> ZeroGPT
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className="text-right">
                     <div className={cn("text-5xl font-serif font-bold leading-none", verdict?.color)}>
@@ -207,40 +288,42 @@ export function AIScoreChecker() {
               </div>
 
               {/* Sentence breakdown */}
-              <div className="space-y-2">
-                <h3 className="text-[10px] uppercase tracking-widest font-bold text-sky-500 px-1">
-                  Sentence Breakdown
-                </h3>
-                <div className="bg-white border border-sky-100 rounded-2xl overflow-hidden shadow-sm max-h-[380px] overflow-y-auto custom-scrollbar">
-                  {result.sentences.map((s, i) => (
-                    <div
-                      key={i}
-                      className={cn(
-                        "p-4 text-sm border-b border-sky-50 last:border-0 transition-colors",
-                        s.aiProbability > 50
-                          ? "bg-red-50/40 hover:bg-red-50/70"
-                          : "hover:bg-sky-50/50"
-                      )}
-                    >
-                      <div className="flex items-start gap-3">
-                        <div className={cn(
-                          "w-1.5 h-1.5 rounded-full mt-2 flex-shrink-0",
-                          s.aiProbability > 50 ? "bg-red-400" : "bg-emerald-400"
-                        )} />
-                        <p className="flex-1 leading-relaxed text-sky-800">{s.sentence}</p>
-                        <span className={cn(
-                          "text-[10px] font-mono px-1.5 py-0.5 rounded flex-shrink-0 mt-0.5",
+              {result.sentences.length > 0 && (
+                <div className="space-y-2">
+                  <h3 className="text-[10px] uppercase tracking-widest font-bold text-sky-500 px-1">
+                    Sentence Breakdown
+                  </h3>
+                  <div className="bg-white border border-sky-100 rounded-2xl overflow-hidden shadow-sm max-h-[380px] overflow-y-auto custom-scrollbar">
+                    {result.sentences.map((s, i) => (
+                      <div
+                        key={i}
+                        className={cn(
+                          "p-4 text-sm border-b border-sky-50 last:border-0 transition-colors",
                           s.aiProbability > 50
-                            ? "bg-red-100 text-red-600"
-                            : "bg-emerald-100 text-emerald-700"
-                        )}>
-                          {Math.round(s.aiProbability)}%
-                        </span>
+                            ? "bg-red-50/40 hover:bg-red-50/70"
+                            : "hover:bg-sky-50/50"
+                        )}
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className={cn(
+                            "w-1.5 h-1.5 rounded-full mt-2 flex-shrink-0",
+                            s.aiProbability > 50 ? "bg-red-400" : "bg-emerald-400"
+                          )} />
+                          <p className="flex-1 leading-relaxed text-sky-800">{s.sentence}</p>
+                          <span className={cn(
+                            "text-[10px] font-mono px-1.5 py-0.5 rounded flex-shrink-0 mt-0.5",
+                            s.aiProbability > 50
+                              ? "bg-red-100 text-red-600"
+                              : "bg-emerald-100 text-emerald-700"
+                          )}>
+                            {Math.round(s.aiProbability)}%
+                          </span>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           ) : !error && (
             <div className="h-full flex flex-col items-center justify-center text-center p-12 border-2 border-dashed border-sky-200 rounded-2xl bg-white/50 min-h-[380px]">
