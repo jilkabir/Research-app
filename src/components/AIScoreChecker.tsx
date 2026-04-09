@@ -123,7 +123,11 @@ export function AIScoreChecker() {
   const [copied, setCopied] = useState(false);
 
   const handleCheck = async (inputText = text) => {
-    if (!inputText.trim()) return;
+    const words = inputText.trim().split(/\s+/).filter(Boolean);
+    if (words.length < 10) {
+      setError('Please enter at least 10 words for a meaningful analysis.');
+      return;
+    }
     setIsChecking(true);
     setError(null);
     setResult(null);
@@ -252,7 +256,7 @@ export function AIScoreChecker() {
           {/* Tip */}
           {!result && !isChecking && (
             <p className="text-[11px] text-sky-400/70 leading-relaxed">
-              Tip: Works best with 100+ words. The more text you provide, the more accurate the analysis.
+              Tip: Requires at least 10 words. Best results with 100+ words of academic text.
             </p>
           )}
         </div>
