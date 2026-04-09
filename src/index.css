@@ -4,11 +4,30 @@
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-serif: "Cormorant Garamond", serif;
+
+  /* Jak Research color palette */
+  --color-jak-blue-50: #f0f9ff;
+  --color-jak-blue-100: #e0f2fe;
+  --color-jak-blue-200: #bae6fd;
+  --color-jak-blue-300: #7dd3fc;
+  --color-jak-blue-400: #38bdf8;
+  --color-jak-blue-500: #0ea5e9;
+  --color-jak-blue-600: #0284c7;
+  --color-jak-blue-700: #0369a1;
+  --color-jak-blue-800: #075985;
+  --color-jak-blue-900: #0c4a6e;
+
+  --color-jak-pink-50:  #fdf2f8;
+  --color-jak-pink-100: #fce7f3;
+  --color-jak-pink-200: #fbcfe8;
+  --color-jak-pink-300: #f9a8d4;
+  --color-jak-pink-400: #f472b6;
+  --color-jak-pink-500: #ec4899;
 }
 
 @layer base {
   body {
-    @apply bg-[#f5f2ed] text-[#1a1a1a] font-sans antialiased;
+    @apply bg-[#f0f9ff] text-[#0c4a6e] font-sans antialiased;
   }
 }
 
@@ -20,10 +39,26 @@
     background: transparent;
   }
   .custom-scrollbar::-webkit-scrollbar-thumb {
-    @apply bg-[#1a1a1a]/10 rounded-full;
+    background: #bae6fd;
+    border-radius: 9999px;
   }
   .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-    @apply bg-[#1a1a1a]/20;
+    background: #7dd3fc;
+  }
+
+  /* Sidebar scrollbar - on dark bg */
+  .sidebar-scrollbar::-webkit-scrollbar {
+    width: 4px;
+  }
+  .sidebar-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .sidebar-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.15);
+    border-radius: 9999px;
+  }
+  .sidebar-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(255,255,255,0.25);
   }
 }
 
@@ -32,23 +67,29 @@
 }
 
 .markdown-body h1 {
-  @apply text-3xl font-serif font-bold mb-6 mt-8 border-b border-[#1a1a1a]/10 pb-2;
+  @apply text-3xl font-serif font-bold mb-6 mt-8 pb-2;
+  border-bottom: 2px solid #bae6fd;
+  color: #075985;
 }
 
 .markdown-body h2 {
   @apply text-2xl font-serif font-semibold mb-4 mt-8;
+  color: #0369a1;
 }
 
 .markdown-body h3 {
   @apply text-xl font-serif font-medium mb-3 mt-6;
+  color: #0284c7;
 }
 
 .markdown-body p {
-  @apply mb-4 text-[#1a1a1a]/80;
+  @apply mb-4;
+  color: #0c4a6e;
 }
 
 .markdown-body ul, .markdown-body ol {
   @apply mb-4 pl-6 space-y-2;
+  color: #0c4a6e;
 }
 
 .markdown-body ul {
@@ -60,14 +101,59 @@
 }
 
 .markdown-body blockquote {
-  @apply border-l-4 border-amber-400 pl-4 py-1 italic text-[#1a1a1a]/70 mb-4 bg-amber-400/5;
+  @apply border-l-4 pl-4 py-1 italic mb-4;
+  border-color: #f9a8d4;
+  background: #fdf2f8;
+  color: #0c4a6e;
 }
 
 .markdown-body code {
-  @apply bg-[#1a1a1a]/5 px-1.5 py-0.5 rounded text-sm font-mono;
+  @apply px-1.5 py-0.5 rounded text-sm font-mono;
+  background: #e0f2fe;
+  color: #075985;
 }
 
 .markdown-body pre {
-  @apply bg-[#1a1a1a] text-white p-4 rounded-lg overflow-x-auto mb-4 font-mono text-sm;
+  @apply p-4 rounded-lg overflow-x-auto mb-4 font-mono text-sm;
+  background: #075985;
+  color: #f0f9ff;
 }
 
+.markdown-body strong {
+  @apply font-semibold;
+  color: #075985;
+}
+
+.markdown-body a {
+  @apply underline;
+  color: #ec4899;
+}
+
+.markdown-body a:hover {
+  color: #f472b6;
+}
+
+/* Gradient sidebar */
+.jak-sidebar {
+  background: linear-gradient(180deg, #075985 0%, #0c4a6e 100%);
+}
+
+/* Pink button gradient */
+.jak-btn-primary {
+  background: linear-gradient(135deg, #0284c7 0%, #0ea5e9 100%);
+  @apply text-white shadow-lg;
+  box-shadow: 0 4px 14px rgba(2, 132, 199, 0.35);
+}
+.jak-btn-primary:hover {
+  background: linear-gradient(135deg, #0369a1 0%, #0284c7 100%);
+  box-shadow: 0 4px 18px rgba(2, 132, 199, 0.45);
+}
+
+.jak-btn-pink {
+  background: linear-gradient(135deg, #ec4899 0%, #f472b6 100%);
+  @apply text-white shadow-lg;
+  box-shadow: 0 4px 14px rgba(236, 72, 153, 0.35);
+}
+.jak-btn-pink:hover {
+  background: linear-gradient(135deg, #db2777 0%, #ec4899 100%);
+}
